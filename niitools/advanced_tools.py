@@ -28,7 +28,9 @@ def scale_intensity(input, mask, new_intensity, output):
     mask_img = mask_nii.get_data()
     assert np.sum(np.abs(in_nii.get_affine() - mask_nii.get_affine())) < 1e-2
 
-    in_img = in_nii.get_data()
+    # reading in image and converting to float; this ensures that no overflow happens during processing
+    in_img = in_nii.get_data().astype(np.float32)
+
     out_img = in_img.copy()
     if (in_img.mean() < 0):
         print("%0.1f%% of voxels were below 0" % ())
@@ -43,8 +45,13 @@ def scale_intensity(input, mask, new_intensity, output):
 
     out_img[mask_img > 0] = voxels * (new_intensity / mode)
 
-    out_nii = nib.Nifti1Image(out_img, header=in_nii.get_header(),
-            affine=in_nii.get_affine())
+    # make data type of image to float 
+    h = in_nii.get_header()
+    out_dtype = np.float32
+    h['datatype'] = 16 # corresponds to float32
+    h['bitpix'] = 32 # corresponds to float32
+
+    out_nii = nib.Nifti1Image(out_img.astype(out_dtype), header=h, affine=in_nii.get_affine())
 
     out_nii.to_filename(output)
 

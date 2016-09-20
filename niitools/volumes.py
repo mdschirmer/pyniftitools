@@ -95,7 +95,10 @@ def _masked_threshold(infile, threshold, outfile, mode='scalar', excludefile='-'
     if type(threshold) is str:
         threshold = ast.literal_eval(threshold)
     nii = nib.load(infile)
-    data = nii.get_data()
+    data = nii.get_data().astype(np.float32)
+    header = nii.get_header()
+    header['datatype'] = 16 # corresponds to float32
+    header['bitpix'] = 32 # corresponds to float32
 
     if labelfile == '-':
         label_arr = np.ones(data.shape)
@@ -129,7 +132,7 @@ def _masked_threshold(infile, threshold, outfile, mode='scalar', excludefile='-'
         with open(outfile, 'w') as f:
             f.write(str(count))
     else:
-        out = nib.Nifti1Image(vol, header=nii.get_header(),
+        out = nib.Nifti1Image(vol, header=header,
                 affine=nii.get_affine())
         out.to_filename(outfile)
 
@@ -240,11 +243,13 @@ def pad(niiFileName, paddedNiiFileName, maskNiiFileName, padAmountMM='30'):
 
     # load the nifti
     nii = nib.load(niiFileName)
+    header = nii.get_header()
+    out_dtype = np.float32
 
     # get the amount of padding in voxels
-    pixdim = nii.get_header()['pixdim'][1:4]
+    pixdim = np.asarray(header.get_zooms())
     padAmount = np.ceil(padAmountMM / pixdim)
-    dims = nii.get_header()['dim'][1:4]
+    dims = header['dim'][1:4]
     assert np.all(dims.shape == padAmount.shape)
     newDims = dims + padAmount * 2
 
@@ -258,16 +263,22 @@ def pad(niiFileName, paddedNiiFileName, maskNiiFileName, padAmountMM='30'):
 
     # set the subvolume in the center of the image w/the padding around it
     vol = np.zeros(newDims)
-    vol[slicer] = nii.get_data()
+    vol[slicer] = nii.get_data().astype(out_dtype)
     volMask = np.zeros(newDims)
     volMask[slicer] = np.ones(dims)
 
     # update affine
     affine = nii.get_affine()
     affine[:3, 3] -= padAmountMM
+
+    # update header info
+    header['dim'][1:4] = newDims
+    header['datatype'] = 16 # corresponds to float32
+    header['bitpix'] = 32 # corresponds to float32
+
     # create niftis
-    newNii = nib.Nifti1Image(vol, header=nii.get_header(), affine=affine)
-    newNiiMask = nib.Nifti1Image(volMask, header=nii.get_header(), affine=affine)
+    newNii = nib.Nifti1Image(vol.astype(out_dtype), header=header, affine=affine)
+    newNiiMask = nib.Nifti1Image(volMask.astype(out_dtype), header=header, affine=affine)
 
     # save niftis
     newNii.to_filename(paddedNiiFileName)

@@ -1,3 +1,4 @@
+#!/data/porpoise/Imaging/Packages/virtualenvs/WMH/bin/python
 from __future__ import print_function
 from __future__ import division
 import sys
@@ -6,6 +7,15 @@ import ast
 import numpy as np
 from numpy import newaxis as nax
 import nibabel as nib
+
+import scipy.ndimage.interpolation as sni
+import pickle
+import gc
+
+###
+# ToDo: 
+#  - Fix affine transformation of individual axis resampling (see e.g. upsample())
+###
 
 def downsample_axis(infile, outfile, axis, new_pixdim, method='linear'):
     """
@@ -130,3 +140,186 @@ def upsample_axis(infile, outfile, outmask, axis, pixdim_ratio, method='linear')
     out_mask = nib.Nifti1Image(mask, header=hdr.copy(), affine=aff)
     out_mask.update_header()
     out_mask.to_filename(outmask)
+
+
+## for all axes at the same time
+
+def upsample(niiFileName, upsampledFile, zoom_values_file='upsampling_log.pickle', isotrop_res=True, upsample_factor=None, polynomial='3'):
+    """
+    Upsample a nifti and save the upsampled image.
+    The upsampling procedure has been implemented in a way that it is easily revertable.
+
+    Example arguments:
+    niiFileName = '10529_t1.nii.gz'
+    upsampled_file = '10529_t1_upsampled.nii.gz'
+    """
+
+    # load the nifti
+    nii = nib.load(niiFileName)
+    header = nii.get_header()
+    affine = nii.get_affine()
+
+    # make data type of image to float 
+    out_dtype = np.float32
+    header['datatype'] = 16 # corresponds to float32
+    header['bitpix'] = 32 # corresponds to float32
+
+    # in case nothing should be done
+    isotrop_res = bool(int(isotrop_res))
+    if ((not isotrop_res) and (upsample_factor is None)):
+        print('Uspampling not requested. Skipping...')
+        nii.to_filename(upsampledFile)
+        return nii
+
+    # convert input to number
+    if isotrop_res:
+        isotrop_res = float(np.min(header.get_zooms()[0:3]))
+        all_upsampling = [float(zoom)/isotrop_res for zoom in header.get_zooms()[0:3]]
+        for idx, zoom in enumerate(all_upsampling):
+            if zoom<1:
+                all_upsampling[idx]= 1.
+            else:
+                all_upsampling[idx]= np.round(zoom)
+        print('Upsampling with scales: ' + str(all_upsampling))
+    else:
+        upsample_factor = float(upsample_factor)
+        all_upsampling = [upsample_factor for zoom in header.get_zooms()[0:3]]
+        
+
+    polynomial = int(polynomial)
+
+    old_volume = np.squeeze(nii.get_data().astype(float))
+    # get new volume shape
+    old_shape = old_volume.shape
+    new_shape = tuple([old_shape[ii]*usampling for ii, usampling in enumerate(all_upsampling)])
+    # get indices
+    a,b,c = np.indices(new_shape)
+    a = a.ravel()
+    b = b.ravel()
+    c = c.ravel()
+
+    # upsample image
+    print('Upsampling volume...')
+    u_values = sni.map_coordinates(old_volume, [a/all_upsampling[0], b/all_upsampling[1], c/all_upsampling[2]])
+    del nii
+    gc.collect()
+    vol = np.zeros(new_shape, dtype = out_dtype)
+
+    for jj in np.arange(len(a)):
+        vol[a[jj], b[jj], c[jj]] = u_values[jj].astype(out_dtype)
+
+    # vol[vol<=0.] = 0 # nonsensical values
+
+    print('Done.')
+
+    # update voxel sizes in header
+    if len(header.get_zooms())==3:
+        new_zooms = tuple( [header.get_zooms()[ii]/float(all_upsampling[ii]) for ii in np.arange(3)] ) # 3 spatial dimensions
+    elif len(header.get_zooms())>3:
+        tmp = [header.get_zooms()[ii]/float(all_upsampling[ii]) for ii in np.arange(3)]
+        tmp.extend(list(header.get_zooms()[3:]))
+        new_zooms = tuple(tmp) # 3 spatial dimensions + 1 time
+    else:
+        print('Cannot handle this stuff... ')
+        print(header.get_zooms())
+        raise Exception('Header has less than 2 entries. 2D?')
+
+    header.set_zooms(new_zooms)
+
+    # adapt affine according to scaling
+    all_upsampling.extend([1.]) # time
+    scaling = np.diag(1./np.asarray(all_upsampling))
+    affine = np.dot(affine, scaling)
+
+    # create new NII
+    newNii = nib.Nifti1Image(vol.astype(out_dtype), header=header, affine=affine)
+
+    # save niftis
+    newNii.to_filename(upsampledFile)
+
+    # save upsampling factors
+    with open(zoom_values_file, 'w') as outfile:
+        pickle.dump([np.unique(a),np.unique(b),np.unique(c),all_upsampling[:-1],polynomial, old_shape], outfile)
+
+
+    return (newNii)
+
+def downsample(niiFileName, downsampled_file, zoom_values_file='upsampling_log.pickle'):
+    """
+    downsample a nifti which has been upsampled with the function above.
+
+    Example arguments:
+    niiFileName = '10529_t1_upsampled.nii.gz'
+    downsample_file = '10529_t1_downsample.nii.gz'
+    zoom_values_file = 'upsampling_log.pickle'
+    """
+
+    # load the nifti
+    nii = nib.load(niiFileName)
+    header = nii.get_header()
+
+    # make data type of image to float 
+    out_dtype = np.float32
+    header['datatype'] = 16 # corresponds to float32
+    header['bitpix'] = 32 # corresponds to float32
+    
+    downsample_factor=[]
+    with open(zoom_values_file,'r') as zfile:
+        [a, b, c, all_upsampling, polynomial, old_shape] = pickle.load(zfile)
+
+    print('Downsampling with scales: ' + str(1./np.asarray(all_upsampling)))
+    if len(all_upsampling) == 1:
+        downsample_values = 1./np.asarray(3*all_upsampling)
+    else:
+        downsample_values = 1./np.asarray(all_upsampling)
+
+    #prepping for loop
+    all_coords = [a,b,c]
+
+    # downsampling image
+    print('Downsampling volume...')
+    downsample_indices = []
+    for idx, factor in enumerate(downsample_values):
+        print('%f, %f'%(idx, factor))
+        coords = (all_coords[idx]*factor)
+        downsample_idx = []
+        for jj in np.arange(np.round(np.max(coords))):
+            downsample_idx.append(np.where(coords==jj)[0])
+        
+        downsample_indices.append(downsample_idx)
+
+    # TODO: change this to use slices notation
+    vol = nii.get_data().astype(out_dtype)[np.squeeze(np.asarray(downsample_indices[0])),:,:]
+    vol = vol[:,np.squeeze(np.asarray(downsample_indices[1])),:]
+    vol = vol[:,:,np.squeeze(np.asarray(downsample_indices[2]))]
+    print('Done.')
+
+    # update voxel sizes in header
+    if len(header.get_zooms())==3:
+        new_zooms = tuple( [header.get_zooms()[ii]/float(downsample_values[ii]) for ii in np.arange(3)] ) # 3 spatial dimensions
+    elif len(header.get_zooms())>3:
+        tmp = [header.get_zooms()[ii]/float(downsample_values[ii]) for ii in np.arange(3)]
+        tmp.extend(list(header.get_zooms()[3:]))
+        new_zooms = tuple(tmp) # 3 spatial dimensions + 1 time
+    else:
+        print('Cannot handle this stuff... ')
+        print(header.get_zooms())
+        raise Exception('Header has less than 2 entries. 2D?')
+
+    # new_zooms = tuple( [header.get_zooms()[ii]/float(downsample_values[ii]) for ii in np.arange(len(header.get_zooms()))] )
+    header.set_zooms(new_zooms)
+
+    # adapt affine according to scaling
+    affine = nii.get_affine()
+    downsample_values = downsample_values.tolist()
+    downsample_values.extend([1.]) # time
+    scaling = np.diag(1./np.asarray(downsample_values))
+    affine = np.dot(affine, scaling)
+
+    # create new NII
+    newNii = nib.Nifti1Image(vol.astype(out_dtype), header=header, affine=affine)
+
+    # save niftis
+    newNii.to_filename(downsampled_file)
+
+    return (newNii)
