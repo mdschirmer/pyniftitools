@@ -249,12 +249,12 @@ def pad(niiFileName, paddedNiiFileName, maskNiiFileName, padAmountMM='30'):
     # get the amount of padding in voxels
     pixdim = np.asarray(header.get_zooms())
     padAmount = np.ceil(padAmountMM / pixdim)
-    dims = header['dim'][1:4]
+    dims = np.asarray(header['dim'][1:4]).astype(int)
     assert np.all(dims.shape == padAmount.shape)
     newDims = dims + padAmount * 2
 
     # compute where the center is for padding
-    center = newDims/2
+    center = (newDims/2.).astype(np.int)
     starts = np.round(center - dims/2)
     ends = starts + dims
 

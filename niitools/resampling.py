@@ -8,6 +8,7 @@ import numpy as np
 from numpy import newaxis as nax
 import nibabel as nib
 
+import scipy.ndimage as sn
 import scipy.ndimage.interpolation as sni
 import pickle
 import gc
@@ -180,7 +181,6 @@ def upsample(niiFileName, upsampledFile, zoom_values_file='upsampling_log.pickle
                 all_upsampling[idx]= 1.
             else:
                 all_upsampling[idx]= np.round(zoom)
-        print('Upsampling with scales: ' + str(all_upsampling))
     else:
         upsample_factor = float(upsample_factor)
         all_upsampling = [upsample_factor for zoom in header.get_zooms()[0:3]]
@@ -189,26 +189,33 @@ def upsample(niiFileName, upsampledFile, zoom_values_file='upsampling_log.pickle
     polynomial = int(polynomial)
 
     old_volume = np.squeeze(nii.get_data().astype(float))
-    # get new volume shape
+    # get new volume shape and update upsampling based on rounded numbers
     old_shape = old_volume.shape
-    new_shape = tuple([old_shape[ii]*usampling for ii, usampling in enumerate(all_upsampling)])
-    # get indices
-    a,b,c = np.indices(new_shape)
-    a = a.ravel()
-    b = b.ravel()
-    c = c.ravel()
+    print(old_shape)
+    new_shape = tuple([np.round(old_shape[ii]*usampling).astype(int) for ii, usampling in enumerate(all_upsampling)])
+    print(new_shape)
+    # all_upsampling = [float(new_shape[ii])/float(old_shape[ii]) for ii in np.arange(len(old_shape))]
+    # print('Upsampling with scales: ' + str(all_upsampling))
+
+    # # get indices
+    # a,b,c = np.indices(new_shape)
+    # a = a.ravel()
+    # b = b.ravel()
+    # c = c.ravel()
 
     # upsample image
     print('Upsampling volume...')
-    u_values = sni.map_coordinates(old_volume, [a/all_upsampling[0], b/all_upsampling[1], c/all_upsampling[2]])
-    del nii
-    gc.collect()
-    vol = np.zeros(new_shape, dtype = out_dtype)
+    # u_values = sni.map_coordinates(old_volume, [a/all_upsampling[0], b/all_upsampling[1], c/all_upsampling[2]])
+    # del nii
+    # gc.collect()
+    # vol = np.zeros(new_shape, dtype = out_dtype)
 
-    for jj in np.arange(len(a)):
-        vol[a[jj], b[jj], c[jj]] = u_values[jj].astype(out_dtype)
+    # for jj in np.arange(len(a)):
+    #     vol[a[jj], b[jj], c[jj]] = u_values[jj].astype(out_dtype)
 
-    # vol[vol<=0.] = 0 # nonsensical values
+    # # vol[vol<=0.] = 0 # nonsensical values
+
+    vol = sn.zoom(old_volume, all_upsampling)
 
     print('Done.')
 
@@ -238,13 +245,16 @@ def upsample(niiFileName, upsampledFile, zoom_values_file='upsampling_log.pickle
     newNii.to_filename(upsampledFile)
 
     # save upsampling factors
+    a=0
+    b=0
+    c=0
     with open(zoom_values_file, 'w') as outfile:
         pickle.dump([np.unique(a),np.unique(b),np.unique(c),all_upsampling[:-1],polynomial, old_shape], outfile)
 
 
     return (newNii)
 
-def downsample(niiFileName, downsampled_file, zoom_values_file='upsampling_log.pickle'):
+def downsample(niiFileName, downsampled_file, zoom_values_file='upsampling_log.pickle', order=3):
     """
     downsample a nifti which has been upsampled with the function above.
 
@@ -268,30 +278,39 @@ def downsample(niiFileName, downsampled_file, zoom_values_file='upsampling_log.p
         [a, b, c, all_upsampling, polynomial, old_shape] = pickle.load(zfile)
 
     print('Downsampling with scales: ' + str(1./np.asarray(all_upsampling)))
-    if len(all_upsampling) == 1:
-        downsample_values = 1./np.asarray(3*all_upsampling)
+    if old_shape:
+        current_shape = nii.get_data().shape
+        print(old_shape)
+        downsample_values = np.asarray([float(old_shape[ii])/float(current_shape[ii]) for ii in np.arange(len(old_shape))])
     else:
-        downsample_values = 1./np.asarray(all_upsampling)
+        if len(all_upsampling) == 1:
+            downsample_values = 1./np.asarray(3*all_upsampling)
+        else:
+            downsample_values = 1./np.asarray(all_upsampling)
 
-    #prepping for loop
-    all_coords = [a,b,c]
+    # #prepping for loop
+    # all_coords = [a,b,c]
+    # # print(np.arange(np.round(np.max(coords))))
 
     # downsampling image
     print('Downsampling volume...')
-    downsample_indices = []
-    for idx, factor in enumerate(downsample_values):
-        print('%f, %f'%(idx, factor))
-        coords = (all_coords[idx]*factor)
-        downsample_idx = []
-        for jj in np.arange(np.round(np.max(coords))):
-            downsample_idx.append(np.where(coords==jj)[0])
+    # downsample_indices = []
+    # for idx, factor in enumerate(downsample_values):
+    #     print('%f, %f'%(idx, factor))
+    #     coords = (all_coords[idx]*factor)
+    #     downsample_idx = []
+    #     for jj in np.arange(np.round(np.max(coords))):
+    #         downsample_idx.append(np.where(coords==jj)[0])
         
-        downsample_indices.append(downsample_idx)
+    #     downsample_indices.append(downsample_idx)
 
-    # TODO: change this to use slices notation
-    vol = nii.get_data().astype(out_dtype)[np.squeeze(np.asarray(downsample_indices[0])),:,:]
-    vol = vol[:,np.squeeze(np.asarray(downsample_indices[1])),:]
-    vol = vol[:,:,np.squeeze(np.asarray(downsample_indices[2]))]
+    # # TODO: change this to use slices notation
+    # vol = nii.get_data().astype(out_dtype)[np.squeeze(np.asarray(downsample_indices[0])),:,:]
+    # vol = vol[:,np.squeeze(np.asarray(downsample_indices[1])),:]
+    # vol = vol[:,:,np.squeeze(np.asarray(downsample_indices[2]))]
+    # if np.sum(np.abs([vol.shape[ii] - old_shape[ii] for ii in np.arange(len(old_shape))])) != 0:
+    #     print('Downsampled output shape not the same as target.')
+    vol = sn.zoom(nii.get_data(), downsample_values, order=int(order))
     print('Done.')
 
     # update voxel sizes in header
