@@ -248,7 +248,7 @@ def upsample(niiFileName, upsampledFile, zoom_values_file='upsampling_log.pickle
     a=0
     b=0
     c=0
-    with open(zoom_values_file, 'w') as outfile:
+    with open(zoom_values_file, 'wb') as outfile:
         pickle.dump([np.unique(a),np.unique(b),np.unique(c),all_upsampling[:-1],polynomial, old_shape], outfile)
 
 
@@ -274,7 +274,7 @@ def downsample(niiFileName, downsampled_file, zoom_values_file='upsampling_log.p
     header['bitpix'] = 32 # corresponds to float32
     
     downsample_factor=[]
-    with open(zoom_values_file,'r') as zfile:
+    with open(zoom_values_file,'rb') as zfile:
         [a, b, c, all_upsampling, polynomial, old_shape] = pickle.load(zfile)
 
     print('Downsampling with scales: ' + str(1./np.asarray(all_upsampling)))
