@@ -15,6 +15,7 @@ functions = {
         'ssd': niitools.volumes.ssd,
         'trim': niitools.volumes.trim_bounding_box,
         'pad': niitools.volumes.pad,
+        'binarize': niitools.util.binarize,
         'warp_ssd': niitools.volumes.warp_ssd,
         'gaussian_blur': niitools.volumes.gaussian_blur,
         'neutralize_affine': niitools.headers.neutralize_affine,
